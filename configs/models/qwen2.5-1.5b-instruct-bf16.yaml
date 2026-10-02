@@ -1,0 +1,17 @@
+name: qwen2.5-1.5b-bf16
+model: Qwen/Qwen2.5-1.5B-Instruct
+served_flags: ["--dtype", "bfloat16"]
+architecture:            # from the model's config.json
+  num_layers: 28
+  num_kv_heads: 2
+  head_dim: 128          # hidden_size 1536 / 12 attention heads
+  kv_dtype_bytes: 2      # bf16 KV cache -> 28 KiB per token
+weights_gib: 2.98
+overhead_gib: 1.12
+cuda_graph_gib: 0.35
+notes: >
+  Memory figures are CALIBRATED, not blind: taken from the 2026-10-02 smoke test log
+  (gpu_memory_utilization 0.8 on an 8188 MiB RTX 4070 Laptop GPU): weights 2.98 GiB,
+  KV cache 1.95 GiB = 72,992 tokens, vLLM reports CUDA graph profiling costs 0.0435 of
+  utilization (~0.35 GiB). Remaining 1.12 GiB = activations + non-torch. Predictions for
+  other models reuse this overhead split as a prior.

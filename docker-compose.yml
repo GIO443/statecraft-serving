@@ -1,0 +1,34 @@
+# GPU services. Only one profile may run at a time (serving and training both need the whole GPU).
+#   docker compose --profile serve up -d
+# Pinned image: vllm/vllm-openai v0.30.0 (torch 2.13.0+cu130, transformers 5.17.0), pinned by
+# digest so every benchmark runs on identical bytes. Never use :latest.
+
+x-vllm-image: &vllm-image vllm/vllm-openai@sha256:8a69ffad015f138d7170c4ddc429e230a3bc1c1719f67e14324749df200a4b90
+
+services:
+  vllm:
+    image: *vllm-image
+    profiles: [serve]
+    ports:
+      - "8000:8000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+      - --max-model-len
+      - ${VLLM_MAX_MODEL_LEN:-4096}
+
+volumes:
+  hf-cache:
+    external: true

@@ -1,0 +1,55 @@
+# Game balance and world generation. Loaded into sim.world.GameConfig (all fields required).
+
+# Map
+provinces_per_faction: 3
+diagonal_edge_fraction: 0.15     # share of grid diagonals added as extra borders
+province_income_min: 3
+province_income_max: 8
+
+# Starting state
+starting_treasury: 50
+starting_army_per_province: 10
+
+# Building
+troops_per_build: 10
+troops_cost: 20
+market_cost: 40
+market_income: 3                 # gold per market level per turn
+max_market_level: 3
+fort_cost: 30
+fort_defense_bonus: 0.25         # +25% defence per fort level
+max_fort_level: 3
+
+# Economy and combat
+troops_per_upkeep_gold: 5        # 1 gold upkeep per this many troops, rounded up
+combat_variance: 0.2             # strengths are scaled by uniform(1 - v, 1 + v)
+trade_pact_income: 4
+
+# Diplomacy
+relation_start: 0
+relation_min: -100
+relation_max: 100
+relation_delta_attack: -30
+relation_delta_trade: 5
+relation_delta_treaty: 15
+proposal_ttl_turns: 2
+
+# Prompting / text
+max_message_chars: 200           # cap on diplomatic_message (enforced in JSON schema)
+history_turns: 3                 # narrator summaries included in each prompt
+narrator_max_words: 120
+
+# Name generation (deterministic from the seeded RNG)
+name_min_syllables: 2
+name_max_syllables: 3
+name_syllables: [ka, ro, vel, mar, tha, en, dor, is, gal, un, bre, sha, lo, qui, tor, an,
+                 zel, mi, ra, ost, fen, kor, ul, dra]
+personalities:
+  - "cautious merchant republic that prefers trade to war"
+  - "aggressive warrior kingdom eager to expand by force"
+  - "devout theocracy that values alliances with the faithful"
+  - "opportunistic raiders who strike at weakened neighbours"
+  - "isolationist highland clans that fortify and wait"
+  - "ambitious empire seeking hegemony through diplomacy and war"
+  - "honourable knights who never break a treaty"
+  - "scheming court that plays rivals against each other"

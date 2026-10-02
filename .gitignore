@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Run outputs: keep only summaries under version control
+results/*
+!results/.gitkeep
+!results/**/summary*.json
+!results/**/summary*.md
+
+# Training data and checkpoints (large)
+data/
+checkpoints/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

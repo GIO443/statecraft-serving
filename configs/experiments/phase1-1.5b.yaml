@@ -1,0 +1,46 @@
+name: phase1-1.5b
+description: >
+  Phase 1 baseline on Qwen2.5-1.5B bf16. Seconds per world turn vs faction count, and the
+  effect of prefix caching, guided decoding and CUDA graphs. Each variant changes exactly one
+  thing relative to `default`.
+model_config_path: configs/models/qwen2.5-1.5b-instruct-bf16.yaml
+game_config_path: configs/game/default.yaml
+
+server:
+  port: 8000
+  gpu_memory_utilization: 0.8
+  # Prompts grow with the map (~7.9k tokens for a 64-faction faction prompt, ~12k for the
+  # 64-faction narrator prompt). vLLM v1 allocates KV blocks on demand, so this reserves nothing.
+  max_model_len: 16384
+  extra_flags: ["--enable-prefix-caching"]
+  startup_timeout_s: 900
+
+agent:
+  faction_max_tokens: 160
+  narrator_max_tokens: 200
+  temperature: 0.7
+  guided_decoding: true
+  faction_priority: null
+  narrator_priority: null
+  narrator: sequential
+
+run:
+  faction_counts: [4, 8, 16, 32, 64]
+  repeats: 3
+  seeds: [0, 1, 2]
+  turns: 6
+  warmup_turns: 1          # turn 0 of every game has a cold prefix cache; excluded from summaries
+  server_warmup_factions: 8
+  server_warmup_turns: 2
+  server_warmup_seed: 1000
+  request_timeout_s: 600
+  metrics_interval_s: 1.0
+
+variants:
+  - name: default
+  - name: prefix-off
+    server: {extra_flags: ["--no-enable-prefix-caching"]}
+  - name: guided-off
+    agent: {guided_decoding: false}
+  - name: eager
+    extra_flags: ["--enforce-eager"]
