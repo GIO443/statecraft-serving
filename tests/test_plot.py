@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import csv
+import itertools
 import json
+import math
 from pathlib import Path
 
-from analysis.plot_turns import load, main
+from analysis.plot_turns import load, main, spread_labels
+
+
+def test_spread_labels_never_collide() -> None:
+    ends = {"default": 14.31, "eager": 14.51, "cascade-on": 12.62, "guided-off": 12.60,
+            "prefix-off": 74.12}  # fmt: skip
+    placed = spread_labels(ends, min_gap=0.045)
+    ys = sorted(placed.values())
+    assert all(b - a >= 0.045 - 1e-12 for a, b in itertools.pairwise(ys))
+    assert placed["prefix-off"] == math.log10(74.12)  # isolated labels stay on their line
+    assert placed["guided-off"] == math.log10(12.60)  # lowest of a cluster stays put
 
 
 def _write_variant(run: Path, name: str, started: str, base: float, stalled_turn: int = -1) -> Path:

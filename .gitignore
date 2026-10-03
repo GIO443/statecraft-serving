@@ -5,11 +5,15 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Run outputs: keep only summaries under version control
-results/*
-!results/.gitkeep
+# Run outputs: keep only small summaries, plots and run notes under version control.
+# (Ignore files, not directories, so the negations below can reach nested files.)
+results/**
+!results/**/
 !results/**/summary*.json
-!results/**/summary*.md
+!results/**/seconds_per_turn.*
+!results/**/env.json
+!results/**/config.yaml
+!results/**/*.md
 
 # Training data and checkpoints (large)
 data/

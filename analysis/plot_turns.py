@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 
 import matplotlib
@@ -74,12 +75,30 @@ def write_csv(data: Data, path: Path) -> None:
                 w.writerow([variant, n, f"{mean:.4f}", f"{sd:.4f}", reps, excluded])
 
 
+LABEL_GAP_DECADES = 0.045  # minimum vertical spacing of end labels on the log axis
+Y_TICKS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+
+
+def spread_labels(ends: dict[str, float], min_gap: float) -> dict[str, float]:
+    """Label y positions (log10 space) near each line end, pushed apart to avoid collisions."""
+    order = sorted(ends, key=lambda k: ends[k])
+    placed: dict[str, float] = {}
+    previous = -math.inf
+    for key in order:
+        y = max(math.log10(ends[key]), previous + min_gap)
+        placed[key] = y
+        previous = y
+    return placed
+
+
 def plot(data: Data, title: str, path: Path) -> None:
     if len(data) > len(SERIES):
         raise ValueError("more variants than categorical slots; split into small multiples")
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
+    ends: dict[str, float] = {}
+    last_x: dict[str, int] = {}
     for i, (variant, points) in enumerate(data.items()):
         xs = list(points)
         means = [points[n][0] for n in xs]
@@ -89,17 +108,26 @@ def plot(data: Data, title: str, path: Path) -> None:
             capsize=3, elinewidth=1, label=variant,
             markeredgecolor=SURFACE, markeredgewidth=1.5,  # surface ring on overlapping marks
         )  # fmt: skip
+        ends[variant], last_x[variant] = means[-1], xs[-1]
+    # Spans can exceed 10x (prefix-off), so a log axis keeps the fast variants readable.
+    for variant, y in spread_labels(ends, LABEL_GAP_DECADES).items():
         ax.annotate(
-            variant, (xs[-1], means[-1]), xytext=(8, 0), textcoords="offset points",
-            va="center", color=INK_2, fontsize=9,
+            variant, (last_x[variant], ends[variant]), xytext=(last_x[variant] * 1.12, 10**y),
+            textcoords="data", va="center", color=INK_2, fontsize=9,
         )  # fmt: skip
     all_n = sorted({n for points in data.values() for n in points})
     ax.set_xscale("log", base=2)
     ax.set_xticks(all_n, [str(n) for n in all_n])
-    ax.set_xlim(all_n[0] / 1.2, all_n[-1] * 1.6)  # room for direct labels
-    ax.set_ylim(bottom=0)
+    ax.set_xlim(all_n[0] / 1.2, all_n[-1] * 1.9)  # room for direct labels
+    lo = min(p[0] for points in data.values() for p in points.values())
+    hi = max(p[0] for points in data.values() for p in points.values())
+    ax.set_yscale("log")
+    ticks = [t for t in Y_TICKS if lo / 1.5 <= t <= hi * 1.5]
+    ax.set_yticks(ticks, [str(t) for t in ticks])
+    ax.minorticks_off()
+    ax.set_ylim(lo / 1.3, hi * 1.3)
     ax.set_xlabel("Factions", color=INK_2)
-    ax.set_ylabel("Seconds per world turn", color=INK_2)
+    ax.set_ylabel("Seconds per world turn (log scale)", color=INK_2)
     ax.set_title(title, color=INK, loc="left", fontsize=12)
     ax.grid(axis="y", color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
