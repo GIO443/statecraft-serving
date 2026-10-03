@@ -4,16 +4,19 @@
 
 Each variant gets a fresh server (so no prefix cache carries over between compared runs) and
 its own results directory with config.yaml, env.json, requests.jsonl, turns.jsonl,
-server_metrics.jsonl and summary.json.
+outputs.jsonl, server_metrics.jsonl and summary.json. A variant whose server stalls is
+aborted, logged in FAILED.md with the container log, and the sweep moves on.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import statistics
 from collections import defaultdict
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, TextIO
@@ -48,6 +51,41 @@ class Scraper(Protocol):
 
     def start(self) -> None: ...
     async def scrape(self, kind: str, **extra: Any) -> Any: ...
+    def seconds_since_progress(self) -> float: ...
+
+
+class ServerStalled(RuntimeError):
+    """vLLM answers /health but has made no token progress with requests pending."""
+
+
+async def guarded[T](
+    work: Awaitable[T], scraper: Scraper, stall_timeout_s: float, poll_s: float
+) -> T:
+    """Await work, but abort it if the server stops making progress."""
+    task = asyncio.ensure_future(work)
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=poll_s)
+        if done:
+            return task.result()
+        stalled = scraper.seconds_since_progress()
+        if stalled > stall_timeout_s:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            raise ServerStalled(f"no token progress for {stalled:.0f}s with requests pending")
+
+
+def output_rows(meta: dict[str, Any], rec: TurnRecord) -> list[dict[str, Any]]:
+    """Raw completions: for diagnosing format failures and as Phase 2 training data."""
+    rows = [
+        {**meta, "turn": rec.turn, "actor": "faction", "faction": fid, "text": text}
+        for fid, text in sorted(rec.outputs.items())
+    ]
+    if rec.narration is not None:
+        rows.append(
+            {**meta, "turn": rec.turn, "actor": "narrator", "faction": None, "text": rec.narration}
+        )
+    return rows
 
 
 def request_row(meta: dict[str, Any], r: RequestRecord, warmup_turns: int) -> dict[str, Any]:
@@ -89,16 +127,21 @@ async def run_variant(
     scraper: Scraper,
     requests_out: JsonlWriter,
     turns_out: JsonlWriter,
+    outputs_out: JsonlWriter,
 ) -> None:
     run = resolved.run
+
+    def guard[T](work: Awaitable[T]) -> Awaitable[T]:
+        return guarded(work, scraper, run.stall_timeout_s, run.metrics_interval_s)
+
     scraper.context = {"phase": "server_warmup"}
     scraper.start()
     warm = Game(
         run.server_warmup_factions, run.server_warmup_seed, resolved.game, resolved.agent, client
     )
     for _ in range(run.server_warmup_turns):
-        await warm.play_turn()
-    await warm.finish()
+        await guard(warm.play_turn())
+    await guard(warm.finish())
 
     for n in run.faction_counts:
         for repeat in range(run.repeats):
@@ -114,41 +157,56 @@ async def run_variant(
             for _ in range(run.turns):
                 if game.over:
                     break
-                rec = await game.play_turn()
+                rec = await guard(game.play_turn())
                 for r in rec.requests:
                     requests_out.write(request_row(meta, r, run.warmup_turns))
                 turns_out.write(turn_row(meta, rec, run.warmup_turns))
+                for row in output_rows(meta, rec):
+                    outputs_out.write(row)
                 await scraper.scrape("turn_end", turn=rec.turn)
-            for r in await game.finish():
+            for r in await guard(game.finish()):
                 requests_out.write(request_row(meta, r, run.warmup_turns))
             print(f"  {resolved.variant}: {n} factions, repeat {repeat} done", flush=True)
 
 
+def usable(row: dict[str, Any]) -> bool:
+    """Turns that count toward timing summaries: not warmup, no failed requests."""
+    return not row["warmup"] and row["request_errors"] == 0
+
+
 def summarize(turns_path: Path) -> dict[str, Any]:
-    """Mean of per-game mean seconds/turn (warmup excluded), with spread across repeats."""
+    """Mean of per-game mean seconds/turn with spread across repeats.
+
+    Warmup turns are excluded; turns with failed requests (timeouts, server stalls) are
+    excluded and counted in excluded_turns, never silently dropped.
+    """
     per_game: dict[int, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
     legal: dict[int, list[float]] = defaultdict(list)
+    excluded: dict[int, int] = defaultdict(int)
     with turns_path.open(encoding="utf-8") as f:
         for line in f:
             row = json.loads(line)
-            if row["warmup"]:
+            n = row["n_factions"]
+            if not usable(row):
+                excluded[n] += not row["warmup"]
                 continue
-            per_game[row["n_factions"]][row["repeat"]].append(row["wall_time_s"])
-            legal[row["n_factions"]].append(row["legal"] / row["n_acting"])
+            per_game[n][row["repeat"]].append(row["wall_time_s"])
+            legal[n].append(row["legal"] / row["n_acting"])
     summary: dict[str, Any] = {}
-    for n, games in sorted(per_game.items()):
-        means = [statistics.fmean(v) for v in games.values()]
+    for n in sorted(set(per_game) | set(excluded)):
+        means = [statistics.fmean(v) for v in per_game[n].values()]
         summary[str(n)] = {
-            "seconds_per_turn_mean": statistics.fmean(means),
+            "seconds_per_turn_mean": statistics.fmean(means) if means else None,
             "seconds_per_turn_stdev": statistics.stdev(means) if len(means) > 1 else 0.0,
             "repeats": len(means),
-            "legal_rate": statistics.fmean(legal[n]),
+            "legal_rate": statistics.fmean(legal[n]) if legal[n] else None,
+            "excluded_turns": excluded[n],
         }
     return summary
 
 
 async def _measure(resolved: ResolvedRun, run_dir: Path) -> None:
-    writers = [JsonlWriter(run_dir / f) for f in ("requests.jsonl", "turns.jsonl")]
+    writers = [JsonlWriter(run_dir / f) for f in ("requests.jsonl", "turns.jsonl", "outputs.jsonl")]
     metrics_out = JsonlWriter(run_dir / "server_metrics.jsonl")
     client = OpenAIChatClient(
         resolved.server.base_url, resolved.model.model, resolved.run.request_timeout_s
@@ -227,13 +285,23 @@ def main(argv: list[str] | None = None) -> int:
                     f"  actual KV cache: {startup.kv_cache_tokens:,} tokens "
                     f"({startup.kv_cache_gib} GiB), prediction error {err:+.1%}"
                 )
-            asyncio.run(_measure(resolved, run_dir))
+            try:
+                asyncio.run(_measure(resolved, run_dir))
+            except ServerStalled as e:
+                note = f"Variant aborted at {datetime.now(UTC).isoformat()}: {e}. See vllm.log.\n"
+                (run_dir / "FAILED.md").write_text(note, encoding="utf-8")
+                print(f"  FAILED: {e}", flush=True)
+            finally:
+                # Saved before the container is removed: the only record of server-side issues.
+                (run_dir / "vllm.log").write_text(server.logs(), encoding="utf-8")
 
         summary = summarize(run_dir / "turns.jsonl")
         (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         for n, s in summary.items():
             mean, sd = s["seconds_per_turn_mean"], s["seconds_per_turn_stdev"]
-            print(f"  {n:>3} factions: {mean:.2f} ± {sd:.2f} s/turn, legal {s['legal_rate']:.0%}")
+            timing = f"{mean:.2f} ± {sd:.2f} s/turn" if mean is not None else "no usable turns"
+            legal = f"{s['legal_rate']:.0%}" if s["legal_rate"] is not None else "n/a"
+            print(f"  {n:>3} factions: {timing}, legal {legal}, excluded {s['excluded_turns']}")
     if not args.dry_run:
         print(f"results: {root}")
     return 0

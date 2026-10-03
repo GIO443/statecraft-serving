@@ -35,6 +35,7 @@ run:
   server_warmup_seed: 1000
   request_timeout_s: 600
   metrics_interval_s: 1.0
+  stall_timeout_s: 180       # no token progress with work pending => abort variant
 
 variants:
   - name: default
@@ -44,3 +45,5 @@ variants:
     agent: {guided_decoding: false}
   - name: eager
     extra_flags: ["--enforce-eager"]
+  - name: cascade-on            # dedupe shared-prefix KV reads in decode (opt-in in v0.30)
+    extra_flags: ["--no-disable-cascade-attn"]

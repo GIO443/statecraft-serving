@@ -56,6 +56,14 @@ def test_parse_invalid(text: str, error_prefix: str) -> None:
     assert result.error is not None and result.error.startswith(error_prefix)
 
 
+def test_schema_error_names_first_failure() -> None:
+    """The two failure modes seen from the unguided 1.5B model must be identifiable."""
+    missing = parse_response(json.dumps({"action": {"type": "pass"}}), MAX_CHARS)
+    assert missing.error is not None and "missing at diplomatic_message" in missing.error
+    flat = parse_response(json.dumps({"type": "pass", "diplomatic_message": ""}), MAX_CHARS)
+    assert flat.error is not None and "action" in flat.error
+
+
 def test_message_at_cap_is_valid() -> None:
     assert parse_response(_wrap({"type": "pass"}, "x" * MAX_CHARS), MAX_CHARS).response
 

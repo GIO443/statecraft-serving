@@ -38,7 +38,9 @@ Reply with exactly one JSON object and nothing else:
 {"type": "trade_offer", "to_faction": <id>, "gold": <n>}
 {"type": "propose_treaty", "to_faction": <id>, "treaty": "peace" | "alliance" | "trade_pact"}
 {"type": "respond_treaty", "proposal_id": <id>, "accept": true | false}
-{"type": "pass"}"""
+{"type": "pass"}
+Example of a complete reply (both keys are always required):
+{"action": {"type": "build", "province": 4, "kind": "fort"}, "diplomatic_message": "We fortify our borders and seek no quarrel."}"""  # noqa: E501
 
 
 def _rules(cfg: GameConfig) -> str:
@@ -140,7 +142,10 @@ def faction_section(world: World, fid: int, cfg: GameConfig) -> str:
     if pending:
         lines.append("Treaty proposals to you:")
         lines.extend(f"proposal_id {p.id}: {p.kind} from faction {p.from_faction}" for p in pending)
-    lines.append("Choose your single action for this turn. Reply with only the JSON object.")
+    lines.append(
+        "Choose your single action for this turn. Reply with only the JSON object, with both "
+        '"action" and "diplomatic_message".'
+    )
     return "\n".join(lines)
 
 

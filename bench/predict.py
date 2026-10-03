@@ -2,6 +2,8 @@
 
 vLLM sizes the KV cache as:
     total_vram * gpu_memory_utilization - weights - peak activations/non-torch - CUDA graphs
+In compiled mode (the default) graphs and compile-mode memory together cost far more than the
+CUDA graph figure vLLM logs: on the 1.5B model, --enforce-eager freed 1.08 GiB, not 0.35.
 and each token costs 2 (K and V) * layers * kv_heads * head_dim * dtype_bytes.
 """
 
@@ -28,9 +30,9 @@ def kv_bytes_per_token(model: ModelConfig) -> int:
 
 
 def predict_kv(model: ModelConfig, server: ServerConfig, total_vram_gib: float) -> KVPrediction:
-    graphs = 0.0 if "--enforce-eager" in server.extra_flags else model.cuda_graph_gib
+    compiled = 0.0 if "--enforce-eager" in server.extra_flags else model.eager_savings_gib
     budget = total_vram_gib * server.gpu_memory_utilization
-    kv_gib = max(0.0, budget - model.weights_gib - model.overhead_gib - graphs)
+    kv_gib = max(0.0, budget - model.weights_gib - model.overhead_gib - compiled)
     per_token = kv_bytes_per_token(model)
     tokens = int(kv_gib * GIB / per_token)
     return KVPrediction(

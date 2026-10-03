@@ -30,6 +30,7 @@ run:
   server_warmup_seed: 1000
   request_timeout_s: 600
   metrics_interval_s: 1.0
+  stall_timeout_s: 180       # no token progress with work pending => abort variant
 
 variants:
   - name: default

@@ -100,7 +100,12 @@ def parse_response(text: str, max_message_chars: int) -> ParseResult:
     try:
         response = ActionResponse.model_validate(data)
     except ValidationError as e:
-        return ParseResult(response=None, error=f"schema violation: {e.error_count()} errors")
+        first = e.errors()[0]
+        where = ".".join(map(str, first["loc"])) or "<root>"
+        return ParseResult(
+            response=None,
+            error=f"schema violation: {e.error_count()} errors (first: {first['type']} at {where})",
+        )
     if len(response.diplomatic_message) > max_message_chars:
         return ParseResult(response=None, error="diplomatic_message too long")
     return ParseResult(response=response, error=None)

@@ -7,11 +7,12 @@ architecture:            # from the model's config.json
   head_dim: 128          # hidden_size 1536 / 12 attention heads
   kv_dtype_bytes: 2      # bf16 KV cache -> 28 KiB per token
 weights_gib: 2.98
-overhead_gib: 1.12
-cuda_graph_gib: 0.35
+overhead_gib: 0.39
+eager_savings_gib: 1.08
 notes: >
-  Memory figures are CALIBRATED, not blind: taken from the 2026-10-02 smoke test log
-  (gpu_memory_utilization 0.8 on an 8188 MiB RTX 4070 Laptop GPU): weights 2.98 GiB,
-  KV cache 1.95 GiB = 72,992 tokens, vLLM reports CUDA graph profiling costs 0.0435 of
-  utilization (~0.35 GiB). Remaining 1.12 GiB = activations + non-torch. Predictions for
-  other models reuse this overhead split as a prior.
+  Memory figures are CALIBRATED, not blind (RTX 4070 Laptop, 8188 MiB, utilization 0.8).
+  Default (compiled + CUDA graphs): weights 2.98 GiB, KV 1.93-1.95 GiB (72,400-72,992 tokens).
+  --enforce-eager: KV 3.01 GiB (112,704 tokens), so eager mode releases 1.08 GiB, about 3x the
+  0.35 GiB CUDA graph figure vLLM logs. The first prediction (graphs only) was off by +31%.
+  Presumed mechanism: eager also disables torch.compile, lowering profiled peak memory;
+  not yet verified from logs. overhead_gib is the remainder: 6.40 - 2.98 - 1.95 - 1.08.

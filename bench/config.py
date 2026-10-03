@@ -34,8 +34,8 @@ class ModelConfig(_Strict):
     served_flags: list[str]  # dtype / quantization flags
     architecture: Architecture
     weights_gib: float  # expected "Model loading took X GiB"
-    overhead_gib: float  # activations + non-torch memory (excluding CUDA graphs)
-    cuda_graph_gib: float  # extra memory for CUDA graphs (0 under --enforce-eager)
+    overhead_gib: float  # memory used in every mode (activations floor, non-torch)
+    eager_savings_gib: float  # released by --enforce-eager (CUDA graphs + compile-mode memory)
     notes: str
 
 
@@ -66,6 +66,7 @@ class RunConfig(_Strict):
     server_warmup_seed: int  # must not be in seeds, or warmup pre-fills the measured prefix cache
     request_timeout_s: float
     metrics_interval_s: float
+    stall_timeout_s: float  # abort the variant if no token progress this long with work pending
 
 
 class Variant(_Strict):

@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from bench.config import REPO_ROOT, load_experiment, pinned_image, resolve
-from bench.harness import JsonlWriter, run_variant, summarize
-from bench.metrics import metric, parse_prometheus
+from bench.harness import JsonlWriter, ServerStalled, guarded, run_variant, summarize
+from bench.metrics import ProgressTracker, metric, parse_prometheus
 from bench.predict import kv_bytes_per_token, predict_kv
 from bench.server import docker_run_command, parse_startup_log, vllm_args
 from bench.stats import percentile
@@ -77,8 +77,8 @@ def test_kv_prediction_reproduces_calibration() -> None:
     assert pred.kv_cache_tokens == pytest.approx(72_992, rel=0.01)
     assert pred.max_concurrency == pytest.approx(17.82, rel=0.01)
     eager = server.model_copy(update={"extra_flags": ["--enforce-eager"]})
-    gained = predict_kv(resolved.model, eager, RTX_4070_LAPTOP_GIB).kv_cache_gib - pred.kv_cache_gib
-    assert gained == pytest.approx(resolved.model.cuda_graph_gib)
+    eager_pred = predict_kv(resolved.model, eager, RTX_4070_LAPTOP_GIB)
+    assert eager_pred.kv_cache_tokens == pytest.approx(112_704, rel=0.02)  # measured 2026-10-02
 
 
 def test_parse_startup_log() -> None:
@@ -131,16 +131,67 @@ def test_percentile() -> None:
 
 
 class FakeScraper:
-    def __init__(self) -> None:
+    def __init__(self, stalled_s: float = 0.0) -> None:
         self.context: dict[str, Any] = {}
         self.scrapes: list[tuple[str, dict[str, Any]]] = []
         self.started = False
+        self.stalled_s = stalled_s
 
     def start(self) -> None:
         self.started = True
 
     async def scrape(self, kind: str, **extra: Any) -> None:
         self.scrapes.append((kind, {**self.context, **extra}))
+
+    def seconds_since_progress(self) -> float:
+        return self.stalled_s
+
+
+def _samples(gen: float, prompt: float, running: float, waiting: float) -> dict[str, float]:
+    return {
+        'vllm:generation_tokens_total{engine="0"}': gen,
+        'vllm:prompt_tokens_total{engine="0"}': prompt,
+        'vllm:num_requests_running{engine="0"}': running,
+        'vllm:num_requests_waiting{engine="0"}': waiting,
+    }
+
+
+def test_progress_tracker_detects_stall() -> None:
+    tracker = ProgressTracker()
+    tracker.update(_samples(10, 100, 8, 56), now=0.0)
+    tracker.update(_samples(20, 100, 8, 56), now=5.0)  # tokens moving: progress
+    assert tracker.seconds_since_progress(now=5.0) == 0.0
+    tracker.update(_samples(20, 100, 8, 56), now=200.0)  # frozen with work pending
+    assert tracker.seconds_since_progress(now=200.0) == 195.0
+    tracker.update(_samples(20, 100, 0, 0), now=300.0)  # idle is not a stall
+    assert tracker.seconds_since_progress(now=300.0) == 0.0
+
+
+def test_guarded_aborts_stalled_work() -> None:
+    async def hang() -> None:
+        await asyncio.sleep(3600)
+
+    async def quick() -> int:
+        return 7
+
+    with pytest.raises(ServerStalled):
+        asyncio.run(guarded(hang(), FakeScraper(stalled_s=999), stall_timeout_s=10, poll_s=0.01))
+    assert asyncio.run(guarded(quick(), FakeScraper(), stall_timeout_s=10, poll_s=0.01)) == 7
+
+
+def test_summarize_excludes_failed_turns(tmp_path: Path) -> None:
+    rows = [
+        {"n_factions": 4, "repeat": 0, "turn": 0, "warmup": True, "wall_time_s": 50.0,
+         "request_errors": 0, "legal": 4, "n_acting": 4},
+        {"n_factions": 4, "repeat": 0, "turn": 1, "warmup": False, "wall_time_s": 2.0,
+         "request_errors": 0, "legal": 2, "n_acting": 4},
+        {"n_factions": 4, "repeat": 0, "turn": 2, "warmup": False, "wall_time_s": 1200.0,
+         "request_errors": 4, "legal": 0, "n_acting": 4},
+    ]  # fmt: skip
+    path = tmp_path / "turns.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    s = summarize(path)["4"]
+    assert (s["seconds_per_turn_mean"], s["legal_rate"], s["excluded_turns"]) == (2.0, 0.5, 1)
 
 
 def _read(path: Path) -> list[dict[str, Any]]:
@@ -152,11 +203,12 @@ def test_run_variant_writes_results(tmp_path: Path) -> None:
     resolved = resolve(exp, exp.variants[0])
     run = resolved.run
     client, scraper = FakeClient(), FakeScraper()
-    requests_out = JsonlWriter(tmp_path / "requests.jsonl")
-    turns_out = JsonlWriter(tmp_path / "turns.jsonl")
-    asyncio.run(run_variant(resolved, client, scraper, requests_out, turns_out))
-    requests_out.close()
-    turns_out.close()
+    writers = [
+        JsonlWriter(tmp_path / f) for f in ("requests.jsonl", "turns.jsonl", "outputs.jsonl")
+    ]
+    asyncio.run(run_variant(resolved, client, scraper, *writers))
+    for w in writers:
+        w.close()
 
     turns = _read(tmp_path / "turns.jsonl")
     assert len(turns) == len(run.faction_counts) * run.repeats * run.turns
@@ -175,6 +227,11 @@ def test_run_variant_writes_results(tmp_path: Path) -> None:
     # Server warmup requests (seed 1000 map) are sent but not recorded.
     warmup_requests = run.server_warmup_factions * run.server_warmup_turns + run.server_warmup_turns
     assert len(client.requests) == len(requests) + warmup_requests
+
+    outputs = _read(tmp_path / "outputs.jsonl")
+    assert sum(o["actor"] == "faction" for o in outputs) == measured_factions
+    assert sum(o["actor"] == "narrator" for o in outputs) == len(turns)
+    assert all(o["text"] for o in outputs)
 
     assert scraper.started
     assert sum(kind == "turn_end" for kind, _ in scraper.scrapes) == len(turns)

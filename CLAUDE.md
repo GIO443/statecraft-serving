@@ -35,6 +35,10 @@ Every optimization must be measured, and every result must be explained in terms
 - Prompt size grows with the world (measured with the Qwen2.5 tokenizer): ~1.35k tokens at 4 factions, ~2.5k at 16, ~4.1k at 32, ~7.9k at 64 (narrator ~12k at 64). Decision: keep the growth; sweeps use `max_model_len 16384` (v1 allocates KV on demand, so this reserves nothing).
 - KV calibration (1.5B bf16, util 0.8, 8188 MiB RTX 4070 Laptop): weights 2.98 GiB, KV 1.95 GiB = 72,992 tokens at 28 KiB/token, CUDA graphs ~0.35 GiB.
 - With Windows using ~1.4 GiB, free VRAM is ~6.55 GiB, exactly the 0.8 budget. Do not raise utilization without checking.
+- Repo split (2026-10-02): this repo is **statecraft-serving** (Phase 1, github.com/GIO443/statecraft-serving, private). Phases 2-4 go in the sibling private repo **speculative-statecraft** (github.com/GIO443/speculative-statecraft, empty), which will depend on this one for `sim/` and `bench/`.
+- First phase1-1.5b sweep (results/phase1-1.5b/20261002T*, commit 9743c87) is superseded. Findings kept: prefix caching ~6x at 64 factions (15.7 vs ~91 s/turn); 64-faction cost is superlinear because decode reads N x context KV per step (TPOT 17 -> 139 ms); vLLM stalled under KV pressure with prefix caching off (/health stayed 200); unguided 1.5B dropped `diplomatic_message` in 100% of replies.
+- Fixes since: complete-reply example in the prompt (unguided validity 0% -> 86%), outputs.jsonl, first-error detail, stall watchdog (FAILED.md + vllm.log), failed turns excluded and counted, eager KV calibration (eager frees 1.08 GiB, not 0.35), `cascade-on` variant (`--no-disable-cascade-attn`, opt-in in v0.30).
+- **Next:** re-run the full sweep: `uv run python -u -m bench.harness configs/experiments/phase1-1.5b.yaml` (~2.5 h, 5 variants). Then plot, write README "why this matters" (toy model of a multi-agent decision cycle on shared context), then make this repo installable for speculative-statecraft.
 
 ## Repository layout (target)
 

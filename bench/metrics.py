@@ -37,6 +37,33 @@ def metric(samples: dict[str, float], name: str) -> float | None:
     return sum(values) if values else None
 
 
+class ProgressTracker:
+    """Detects an engine that is alive (/health 200) but not making progress.
+
+    Progress = token counters moved, or nothing is pending. Requests pending with frozen
+    counters is a stall (seen in vLLM 0.30 under KV pressure with prefix caching off).
+    """
+
+    def __init__(self) -> None:
+        self._tokens: float | None = None
+        self.last_progress = time.monotonic()
+
+    def update(self, samples: dict[str, float], now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        tokens = (metric(samples, "vllm:generation_tokens_total") or 0) + (
+            metric(samples, "vllm:prompt_tokens_total") or 0
+        )
+        pending = (metric(samples, "vllm:num_requests_running") or 0) + (
+            metric(samples, "vllm:num_requests_waiting") or 0
+        )
+        if tokens != self._tokens or pending == 0:
+            self.last_progress = now
+        self._tokens = tokens
+
+    def seconds_since_progress(self, now: float | None = None) -> float:
+        return (time.monotonic() if now is None else now) - self.last_progress
+
+
 class MetricsScraper:
     """Periodic background scrape plus on-demand scrapes at turn boundaries."""
 
@@ -47,8 +74,12 @@ class MetricsScraper:
         self.interval_s = interval_s
         self.sink = sink
         self.context: dict[str, Any] = {}
+        self.progress = ProgressTracker()
         self._client = httpx.AsyncClient(timeout=interval_s)
         self._task: asyncio.Task[None] | None = None
+
+    def seconds_since_progress(self) -> float:
+        return self.progress.seconds_since_progress()
 
     async def scrape(self, kind: str, **extra: Any) -> dict[str, float] | None:
         try:
@@ -58,6 +89,7 @@ class MetricsScraper:
             self.sink({"t": time.time(), "kind": kind, **self.context, **extra, "error": str(e)})
             return None
         samples = parse_prometheus(response.text)
+        self.progress.update(samples)
         self.sink({"t": time.time(), "kind": kind, **self.context, **extra, "metrics": samples})
         return samples
 

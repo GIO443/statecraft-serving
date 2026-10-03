@@ -2,7 +2,8 @@
 
     uv run --group analysis python -m analysis.plot_turns results/phase1-1.5b/<timestamp>
 
-Reads <run>/<variant>/turns.jsonl, drops warmup turns, averages each game, then reports the
+Reads <run>/<variant>/turns.jsonl and summarizes it exactly like the harness: warmup turns and
+turns with failed requests are excluded (the CSV counts the latter), each game is averaged, then
 mean and standard deviation across repeats. Writes seconds_per_turn.png and .csv into <run>.
 """
 
@@ -11,11 +12,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import statistics
-from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
+
+from bench.harness import summarize
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -29,9 +30,15 @@ SURFACE, INK, INK_2, MUTED, GRID, AXIS = (
 )  # fmt: skip
 
 
-def load(run_dir: Path) -> dict[str, dict[int, tuple[float, float, int]]]:
-    """{variant: {n_factions: (mean s/turn, stdev across repeats, repeats)}} in run order."""
-    out: dict[str, dict[int, tuple[float, float, int]]] = {}
+Point = tuple[float, float, int, int]  # mean s/turn, stdev across repeats, repeats, excluded
+Data = dict[str, dict[int, Point]]
+# Marker files written by the harness (FAILED.md) or by hand (INCOMPLETE.md).
+PARTIAL_MARKERS = ("FAILED.md", "INCOMPLETE.md")
+
+
+def load(run_dir: Path) -> Data:
+    """{variant label: {n_factions: Point}} in run order, using the harness's summarize()."""
+    out: Data = {}
 
     def started(p: Path) -> str:
         env = p / "env.json"
@@ -42,31 +49,32 @@ def load(run_dir: Path) -> dict[str, dict[int, tuple[float, float, int]]]:
         (p for p in run_dir.iterdir() if (p / "turns.jsonl").exists()), key=lambda p: started(p)
     )
     for vdir in variant_dirs:
-        games: dict[int, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
-        with (vdir / "turns.jsonl").open(encoding="utf-8") as f:
-            for line in f:
-                row = json.loads(line)
-                if not row["warmup"]:
-                    games[row["n_factions"]][row["repeat"]].append(row["wall_time_s"])
-        out[vdir.name] = {}
-        for n, by_repeat in sorted(games.items()):
-            means = [statistics.fmean(v) for v in by_repeat.values()]
-            sd = statistics.stdev(means) if len(means) > 1 else 0.0
-            out[vdir.name][n] = (statistics.fmean(means), sd, len(means))
+        partial = any((vdir / m).exists() for m in PARTIAL_MARKERS)
+        label = f"{vdir.name} (partial)" if partial else vdir.name
+        out[label] = {
+            int(n): (
+                s["seconds_per_turn_mean"],
+                s["seconds_per_turn_stdev"],
+                s["repeats"],
+                s["excluded_turns"],
+            )
+            for n, s in summarize(vdir / "turns.jsonl").items()
+            if s["seconds_per_turn_mean"] is not None
+        }
     return out
 
 
-def write_csv(data: dict[str, dict[int, tuple[float, float, int]]], path: Path) -> None:
+def write_csv(data: Data, path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["variant", "n_factions", "seconds_per_turn_mean", "seconds_per_turn_stdev",
-                    "repeats"])  # fmt: skip
+                    "repeats", "excluded_turns"])  # fmt: skip
         for variant, points in data.items():
-            for n, (mean, sd, reps) in points.items():
-                w.writerow([variant, n, f"{mean:.4f}", f"{sd:.4f}", reps])
+            for n, (mean, sd, reps, excluded) in points.items():
+                w.writerow([variant, n, f"{mean:.4f}", f"{sd:.4f}", reps, excluded])
 
 
-def plot(data: dict[str, dict[int, tuple[float, float, int]]], title: str, path: Path) -> None:
+def plot(data: Data, title: str, path: Path) -> None:
     if len(data) > len(SERIES):
         raise ValueError("more variants than categorical slots; split into small multiples")
     fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
