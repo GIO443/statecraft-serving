@@ -1,7 +1,7 @@
 [project]
-name = "speculative-statecraft"
+name = "statecraft-serving"
 version = "0.1.0"
-description = "LLM-driven grand strategy simulation as an inference-optimization workload for vLLM"
+description = "LLM-driven grand strategy simulation as a vLLM serving benchmark on one 8 GB GPU"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -20,8 +20,16 @@ dev = [
     "ruff>=0.7",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Installed editable by speculative-statecraft; bench.config.REPO_ROOT resolves configs/ and
+# docker-compose.yml relative to this checkout, so a non-editable install is not supported.
+[tool.hatch.build.targets.wheel]
+packages = ["sim", "bench", "analysis"]
+
 [tool.uv]
-package = false
 default-groups = ["dev", "analysis"]
 
 [tool.pytest.ini_options]

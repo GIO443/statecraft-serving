@@ -39,7 +39,9 @@ Every optimization must be measured, and every result must be explained in terms
 - First phase1-1.5b sweep (results/phase1-1.5b/20261002T*, commit 9743c87) is superseded. Findings kept: prefix caching ~6x at 64 factions (15.7 vs ~91 s/turn); 64-faction cost is superlinear because decode reads N x context KV per step (TPOT 17 -> 139 ms); vLLM stalled under KV pressure with prefix caching off (/health stayed 200); unguided 1.5B dropped `diplomatic_message` in 100% of replies.
 - Fixes since: complete-reply example in the prompt (unguided validity 0% -> 86%), outputs.jsonl, first-error detail, stall watchdog (FAILED.md + vllm.log), failed turns excluded and counted, eager KV calibration (eager frees 1.08 GiB, not 0.35), `cascade-on` variant (`--no-disable-cascade-attn`, opt-in in v0.30).
 - **Phase 1 sweep for 1.5B done** (results/phase1-1.5b/20261003T001956Z, commit da7df74, 0 failed/excluded turns). Seconds per turn at 4 / 16 / 64 factions: default 3.84 / 5.17 / 14.31; prefix-off 3.78 / 8.87 / 74.12 (5.2x at 64); guided-off 3.31 / 4.78 / 12.60 (grammar costs 7-19% TPOT; unguided valid 78-92%, legal-given-valid unchanged ~67%); eager 5.28 / 6.40 / 14.51 (launch overhead dominates small batches, converges at 64; extra KV unused since default peaks ~58%); cascade-on 3.55 / 4.55 / 12.62 (TPOT -8..-15% where >= 8 requests; 4-faction difference is run-to-run noise ~7%). Narrator hit its 200-token cap in ~46% of turns.
-- **Next:** README "why this matters" (toy model of a multi-agent decision cycle on shared context) with these results; rename folder to statecraft-serving; make this repo installable for speculative-statecraft; model matrix (needs download approval).
+- **Decision (2026-10-03): model matrix dropped.** The analysis is about method and mechanism, not model choice; one model shows every mechanism. Phase 2 (in speculative-statecraft) uses Qwen2.5-1.5B as the speculation target, so no downloads are needed.
+- README written (findings + "toy model of a business problem" framing). Repo is installable as distribution `statecraft-serving` (hatchling; packages sim, bench, analysis); consumers must install it editable because `bench.config.REPO_ROOT` resolves `configs/` from the checkout.
+- **Phase 1 is done.** Next: rename the local folder to `statecraft-serving` (user does this with VS Code closed), then scaffold speculative-statecraft with an editable path dependency on `../statecraft-serving`.
 
 ## Repository layout (target)
 
@@ -117,7 +119,7 @@ Run each config at least 3 times and report mean and spread. Warm up the server 
 - Build `sim/` with unit tests for rules and the prefix identity test.
 - Build `bench/` and run baseline sweeps: faction counts 4, 8, 16, 32, 64.
 - Experiments: prefix caching on vs off; guided decoding on vs off (and its overhead); `max_model_len` vs max concurrency; CUDA graphs vs `--enforce-eager` (graphs cost VRAM that could go to KV cache).
-- Model matrix: 1.5B FP16 baseline, 3B FP8, 3B AWQ 4-bit, 7B/8B AWQ 4-bit if it fits with usable KV cache.
+- ~~Model matrix: 1.5B FP16 baseline, 3B FP8, 3B AWQ 4-bit, 7B/8B AWQ 4-bit if it fits with usable KV cache.~~ Dropped 2026-10-03: the study is about method, not model choice (see Current status).
 - Before each model run, write down a predicted KV cache token budget and max concurrency, then compare with what vLLM logs at startup. Keep these predictions in the results.
 
 **Done when:** one command runs a full sweep and produces results for every config, and a script plots seconds per turn vs faction count.
