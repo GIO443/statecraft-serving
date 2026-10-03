@@ -96,3 +96,45 @@ def test_server_error_is_reported_not_raised() -> None:
     assert result.error is not None and "BadRequestError" in result.error
     assert result.text == ""
     assert result.ttft_s is None
+
+
+def test_token_ids_requested_and_collected() -> None:
+    seen: list[dict] = []
+
+    def chunk(content: str | None, ids: list[int], finish: str | None = None) -> dict:
+        c = _chunk(content, finish)
+        c["choices"][0]["token_ids"] = ids
+        return c
+
+    first = chunk("Hel", [7, 8]) | {"prompt_token_ids": [1, 2, 3]}
+    # vLLM sends a content-less chunk for the stop token when token ids are requested.
+    events = (first, chunk("lo", [9]), chunk(None, [151645], "stop"), USAGE_CHUNK)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=_sse(*events))
+
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=8,
+        temperature=0,
+        return_token_ids=True,
+    )
+    result = asyncio.run(_client(handler).chat(request))
+    assert seen[0]["return_token_ids"] is True
+    assert result.text == "Hello"
+    assert result.prompt_token_ids == [1, 2, 3]
+    assert result.token_ids == [7, 8, 9, 151645]
+
+
+def test_token_ids_off_by_default() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=_sse(_chunk("x", "stop"), USAGE_CHUNK))
+
+    request = ChatRequest(messages=[{"role": "user", "content": "hi"}], max_tokens=1, temperature=0)
+    result = asyncio.run(_client(handler).chat(request))
+    assert "return_token_ids" not in seen[0]
+    assert result.prompt_token_ids is None and result.token_ids is None

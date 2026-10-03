@@ -25,6 +25,7 @@ class ChatRequest(BaseModel):
     seed: int | None = None
     json_schema: dict[str, Any] | None = None  # set => guided decoding (vLLM structured_outputs)
     priority: int | None = None  # set => requires vLLM --scheduling-policy priority
+    return_token_ids: bool = False  # ask vLLM for prompt and sampled token ids (training data)
 
 
 class Completion(BaseModel):
@@ -35,6 +36,8 @@ class Completion(BaseModel):
     latency_s: float
     finish_reason: str | None
     error: str | None = None
+    prompt_token_ids: list[int] | None = None  # only with ChatRequest.return_token_ids
+    token_ids: list[int] | None = None  # sampled ids, as generated (not re-tokenized text)
 
 
 class ChatClient(Protocol):
@@ -70,8 +73,12 @@ class OpenAIChatClient:
             extra_body["structured_outputs"] = {"json": request.json_schema}
         if request.priority is not None:
             extra_body["priority"] = request.priority
+        if request.return_token_ids:
+            extra_body["return_token_ids"] = True
 
         parts: list[str] = []
+        prompt_ids: list[int] | None = None
+        ids: list[int] | None = [] if request.return_token_ids else None
         ttft: float | None = None
         usage = None
         finish_reason: str | None = None
@@ -91,7 +98,11 @@ class OpenAIChatClient:
             async for chunk in stream:
                 if chunk.usage is not None:
                     usage = chunk.usage
+                if ids is not None and prompt_ids is None:
+                    prompt_ids = getattr(chunk, "prompt_token_ids", None)  # vLLM extension
                 for choice in chunk.choices:
+                    if ids is not None:
+                        ids.extend(getattr(choice, "token_ids", None) or [])
                     delta = choice.delta.content if choice.delta else None
                     if delta:
                         if ttft is None:
@@ -112,6 +123,8 @@ class OpenAIChatClient:
             latency_s=latency,
             finish_reason=finish_reason,
             error=error,
+            prompt_token_ids=prompt_ids,
+            token_ids=ids,
         )
 
     async def aclose(self) -> None:
