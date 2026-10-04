@@ -268,3 +268,18 @@ def test_failed_server_start_removes_container(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="exited"), server:
         pass
     assert stopped == [True]
+
+
+def test_startup_failure_surfaces_root_cause() -> None:
+    from bench.server import startup_failure
+
+    log = "\n".join(
+        ["(EngineCore) ERROR Traceback (most recent call last):"]
+        + ["(EngineCore) ERROR   frame"] * 500
+        + ["(EngineCore) ERROR ValueError: To serve at least one request ... 0.3 GiB"]
+        + ["(APIServer) noise"] * 500
+        + ["(APIServer) RuntimeError: Engine core initialization failed."]
+    )
+    head = startup_failure(log, tail_chars=200).split("--- log tail ---")[0]
+    assert "ValueError: To serve at least one request" in head
+    assert "RuntimeError: Engine core initialization failed." in head

@@ -51,6 +51,20 @@ def parse_startup_log(text: str) -> StartupInfo:
     )
 
 
+_ERROR_LINE = re.compile(r"\b\w*Error: ")
+
+
+def startup_failure(log: str, tail_chars: int = 3000) -> str:
+    """Root-cause lines (exception messages) first, then the log tail.
+
+    vLLM's engine prints its real error deep in a long traceback; the tail alone usually shows
+    only the API server's generic "Engine core initialization failed".
+    """
+    errors = dict.fromkeys(line.strip() for line in log.splitlines() if _ERROR_LINE.search(line))
+    head = "\n".join(list(errors)[-5:])
+    return f"root cause:\n{head}\n--- log tail ---\n{log[-tail_chars:]}"
+
+
 def vllm_args(model: ModelConfig, server: ServerConfig) -> list[str]:
     return [
         "--model",
@@ -129,7 +143,9 @@ class VLLMServer:
         deadline = time.monotonic() + self.server.startup_timeout_s
         while time.monotonic() < deadline:
             if not self.running():
-                raise RuntimeError(f"vLLM container exited during startup:\n{self.logs()[-4000:]}")
+                raise RuntimeError(
+                    f"vLLM container exited during startup:\n{startup_failure(self.logs())}"
+                )
             try:
                 if httpx.get(f"{self.server.root_url}/health", timeout=5).status_code == 200:
                     return
