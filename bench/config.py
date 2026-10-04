@@ -45,6 +45,8 @@ class ServerConfig(_Strict):
     max_model_len: int
     extra_flags: list[str]
     startup_timeout_s: float
+    # Extra `docker run -v` mounts beyond hf-cache, e.g. "spec-data:/data" for draft heads.
+    volumes: list[str] = Field(default_factory=list)
 
     @property
     def base_url(self) -> str:

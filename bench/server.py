@@ -72,6 +72,7 @@ def docker_run_command(image: str, model: ModelConfig, server: ServerConfig) -> 
         "--ipc", "host",
         "-p", f"{server.port}:8000",
         "-v", f"{HF_CACHE_VOLUME}:/root/.cache/huggingface",
+        *(arg for v in server.volumes for arg in ("-v", v)),
         image,
         *vllm_args(model, server),
     ]  # fmt: skip
@@ -93,7 +94,11 @@ class VLLMServer:
         self.command = docker_run_command(image, model, server)
 
     def __enter__(self) -> VLLMServer:
-        self.start()
+        try:
+            self.start()
+        except BaseException:
+            self.stop()  # a failed start must not leave the container holding GPU or volumes
+            raise
         return self
 
     def __exit__(self, *exc: object) -> None:

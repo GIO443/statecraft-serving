@@ -102,6 +102,16 @@ def test_server_command() -> None:
     assert cmd[:3] == ["docker", "run", "-d"]
     assert "hf-cache:/root/.cache/huggingface" in cmd
     assert cmd[cmd.index("img@sha256:x") + 1 :] == args
+    assert cmd.count("-v") == 1  # no extra mounts unless configured
+
+
+def test_server_extra_volumes() -> None:
+    exp = load_experiment(PHASE1)
+    resolved = resolve(exp, exp.variants[0])
+    server = resolved.server.model_copy(update={"volumes": ["spec-data:/data"]})
+    cmd = docker_run_command("img@sha256:x", resolved.model, server)
+    i = cmd.index("spec-data:/data")
+    assert cmd[i - 1] == "-v" and i < cmd.index("img@sha256:x")
 
 
 def test_parse_prometheus() -> None:
@@ -240,3 +250,21 @@ def test_run_variant_writes_results(tmp_path: Path) -> None:
     summary = summarize(tmp_path / "turns.jsonl")
     assert set(summary) == {str(n) for n in run.faction_counts}
     assert all(s["repeats"] == run.repeats and s["legal_rate"] == 1.0 for s in summary.values())
+
+
+def test_failed_server_start_removes_container(monkeypatch) -> None:
+    from bench.server import VLLMServer
+
+    exp = load_experiment(PHASE1)
+    resolved = resolve(exp, exp.variants[0])
+    server = VLLMServer("img@sha256:x", resolved.model, resolved.server)
+    stopped: list[bool] = []
+
+    def boom() -> None:
+        raise RuntimeError("vLLM container exited during startup")
+
+    monkeypatch.setattr(server, "start", boom)
+    monkeypatch.setattr(server, "stop", lambda: stopped.append(True))
+    with pytest.raises(RuntimeError, match="exited"), server:
+        pass
+    assert stopped == [True]
