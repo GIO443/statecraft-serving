@@ -181,3 +181,38 @@ def test_game_replays_identically(cfg: GameConfig) -> None:
 
     assert run("sequential") == run("sequential")
     assert run("pipelined") == run("pipelined")
+
+
+def test_acting_factions_subset(cfg: GameConfig) -> None:
+    """Control runs: full-size world (same prompts), but only some factions call the model."""
+    full_client, sub_client = FakeClient(), FakeClient()
+    full = Game(8, seed=3, game_cfg=cfg, agent_cfg=agent_cfg(), client=full_client)
+    sub = Game(8, seed=3, game_cfg=cfg, agent_cfg=agent_cfg(), client=sub_client, acting_factions=3)
+    (full_rec,), _ = play(full, 1)
+    (rec,), _ = play(sub, 1)
+
+    acting = sorted(faction_of(r) for r in faction_requests(sub_client, 0))
+    assert acting == [0, 1, 2]
+    assert rec.n_factions == 3
+    assert [r.actor for r in rec.requests].count("faction") == 3
+    # Passive factions pass legally; nothing is counted as invalid output.
+    assert rec.result.invalid_output == [] and rec.result.illegal == []
+    assert set(rec.result.legal) == set(range(8))
+    # Same world, same prompts: the acting factions see byte-identical messages.
+    full_msgs = {faction_of(r): r.messages for r in faction_requests(full_client, 0)}
+    for r in faction_requests(sub_client, 0):
+        assert r.messages == full_msgs[faction_of(r)]
+    assert full_rec.n_factions == 8
+
+
+@pytest.mark.parametrize("acting", [0, 9])
+def test_acting_factions_out_of_range(cfg: GameConfig, acting: int) -> None:
+    with pytest.raises(ValueError, match="acting_factions"):
+        Game(
+            8,
+            seed=0,
+            game_cfg=cfg,
+            agent_cfg=agent_cfg(),
+            client=FakeClient(),
+            acting_factions=acting,
+        )

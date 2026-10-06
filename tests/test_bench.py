@@ -283,3 +283,35 @@ def test_startup_failure_surfaces_root_cause() -> None:
     head = startup_failure(log, tail_chars=200).split("--- log tail ---")[0]
     assert "ValueError: To serve at least one request" in head
     assert "RuntimeError: Engine core initialization failed." in head
+
+
+def test_world_factions_validated() -> None:
+    exp = load_experiment(PHASE1)
+    bad = exp.model_copy(update={"run": exp.run.model_copy(update={"world_factions": 32})})
+    with pytest.raises(ValueError, match="world_factions"):
+        resolve(bad, exp.variants[0])  # faction_counts go up to 64
+
+
+def test_run_variant_fixed_world(tmp_path: Path) -> None:
+    exp = load_experiment(REPO_ROOT / "configs" / "experiments" / "smoke.yaml")
+    run = exp.run.model_copy(update={"world_factions": 8, "repeats": 1})
+    resolved = resolve(exp.model_copy(update={"run": run}), exp.variants[0])
+    client = FakeClient()
+    writers = [
+        JsonlWriter(tmp_path / f) for f in ("requests.jsonl", "turns.jsonl", "outputs.jsonl")
+    ]
+    asyncio.run(run_variant(resolved, client, FakeScraper(), *writers))
+    for w in writers:
+        w.close()
+    turns = _read(tmp_path / "turns.jsonl")
+    assert {t["world_factions"] for t in turns} == {8}
+    assert all(t["n_acting"] == t["n_factions"] for t in turns)
+    assert {t["n_factions"] for t in turns} == set(run.faction_counts)
+    # Prompt size is set by the world, not by how many factions act.
+    by_n = {}
+    for r in _read(tmp_path / "requests.jsonl"):
+        if r["actor"] == "faction" and r["turn"] == 0:
+            by_n.setdefault(r["n_factions"], []).append(r["prompt_tokens"])
+    assert len(by_n) == len(run.faction_counts)
+    means = [sum(v) / len(v) for v in by_n.values()]
+    assert max(means) - min(means) < 0.02 * max(means)

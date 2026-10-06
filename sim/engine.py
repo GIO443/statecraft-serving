@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from bench.client import ChatClient, Completion
+from sim.actions import ActionResponse, Pass
 from sim.agents import AgentConfig, Agents, Decision, request_seed
 from sim.prompts import faction_messages, narrator_messages, shared_prefix
 from sim.rules import TurnResult, resolve_turn
@@ -77,8 +78,17 @@ def _narrator_record(turn: int, c: Completion) -> RequestRecord:
     )
 
 
+# Non-acting factions (control runs with a fixed world but fewer agents) pass without a model call.
+PASSIVE = ActionResponse(action=Pass(type="pass"), diplomatic_message="")
+
+
 class Game:
-    """One seeded game. All game randomness flows through self.rng."""
+    """One seeded game. All game randomness flows through self.rng.
+
+    With `acting_factions`, the world still has `n_factions` factions (so prompts have the full
+    world's size), but only the first `acting_factions` alive ones call the model each turn; the
+    rest pass. This separates concurrency from context length in benchmarks.
+    """
 
     def __init__(
         self,
@@ -88,7 +98,11 @@ class Game:
         agent_cfg: AgentConfig,
         client: ChatClient,
         on_narration: Callable[[str], None] | None = None,
+        acting_factions: int | None = None,
     ) -> None:
+        if acting_factions is not None and not 1 <= acting_factions <= n_factions:
+            raise ValueError(f"acting_factions must be in 1..{n_factions}")
+        self.acting_factions = acting_factions
         self.seed = seed
         self.game_cfg = game_cfg
         self.agent_cfg = agent_cfg
@@ -120,6 +134,7 @@ class Game:
 
         shared = shared_prefix(world, cfg)
         alive = [f.id for f in world.alive_factions()]
+        acting = alive[: self.acting_factions] if self.acting_factions else alive
         decisions = await asyncio.gather(
             *(
                 self.agents.decide(
@@ -127,7 +142,7 @@ class Game:
                     faction_messages(shared, world, fid, cfg),
                     request_seed(self.seed, turn, f"faction{fid}"),
                 )
-                for fid in alive
+                for fid in acting
             )
         )
         decide_time = time.perf_counter() - start
@@ -135,7 +150,8 @@ class Game:
         # Prompts for this turn are built, so the previous narration may now enter history.
         requests = await self._collect_narration()
 
-        result = resolve_turn(world, {d.faction: d.response for d in decisions}, cfg, self.rng)
+        responses = {fid: PASSIVE for fid in alive} | {d.faction: d.response for d in decisions}
+        result = resolve_turn(world, responses, cfg, self.rng)
         requests.extend(_faction_record(turn, d, result) for d in decisions)
         statements = {d.faction: d.response.diplomatic_message for d in decisions if d.response}
 
@@ -157,7 +173,7 @@ class Game:
 
         return TurnRecord(
             turn=turn,
-            n_factions=len(alive),
+            n_factions=len(acting),
             wall_time_s=time.perf_counter() - start,
             decide_time_s=decide_time,
             requests=requests,

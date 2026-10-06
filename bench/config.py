@@ -69,6 +69,9 @@ class RunConfig(_Strict):
     request_timeout_s: float
     metrics_interval_s: float
     stall_timeout_s: float  # abort the variant if no token progress this long with work pending
+    # Control for prompt growth: if set, every game's world has this many factions (fixed prompt
+    # size) and faction_counts is the number of factions that act (concurrent requests).
+    world_factions: int | None = None
 
 
 class Variant(_Strict):
@@ -122,6 +125,9 @@ def resolve(exp: ExperimentConfig, variant: Variant) -> ResolvedRun:
         raise ValueError("need at least one seed per repeat")
     if exp.run.server_warmup_seed in exp.run.seeds[: exp.run.repeats]:
         raise ValueError("server_warmup_seed must differ from measured seeds")
+    world = exp.run.world_factions
+    if world is not None and max(exp.run.faction_counts) > world:
+        raise ValueError("faction_counts (acting factions) cannot exceed world_factions")
     server = exp.server.model_dump() | variant.server
     server["extra_flags"] = [*server["extra_flags"], *variant.extra_flags]
     game_path = Path(exp.game_config_path)

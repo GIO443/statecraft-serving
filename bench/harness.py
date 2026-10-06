@@ -149,11 +149,19 @@ async def run_variant(
                 "experiment": resolved.experiment,
                 "variant": resolved.variant,
                 "n_factions": n,
+                "world_factions": run.world_factions or n,
                 "repeat": repeat,
                 "seed": run.seeds[repeat],
             }
             scraper.context = {"phase": "measure", **meta}
-            game = Game(n, run.seeds[repeat], resolved.game, resolved.agent, client)
+            game = Game(
+                run.world_factions or n,
+                run.seeds[repeat],
+                resolved.game,
+                resolved.agent,
+                client,
+                acting_factions=n if run.world_factions else None,
+            )
             for _ in range(run.turns):
                 if game.over:
                     break
