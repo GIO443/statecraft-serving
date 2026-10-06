@@ -49,12 +49,12 @@ warmup turn excluded). Each variant changes exactly one thing relative to `defau
 `~` marks a difference from `default` within two standard errors (n = 3), i.e. not claimed as
 a finding.
 
-**Read this curve with one caveat.** Each faction adds territory to the shared world, so
-the prompt grows with the number of agents: ~1.35k tokens at 4 factions, 7.9k at 64. The
-faction-count axis therefore mixes two variables, concurrency and context length. Total prompt
-tokens per turn grow ~93x while agents grow 16x. A control that fixes prompt size and varies
-only the number of agents is the next experiment. Until then, the scaling explanations below
-say which mechanism each number supports.
+**The faction-count axis mixes two variables, and a control separates them.** Each faction
+adds territory to the shared world, so the prompt grows with the number of agents: ~1.35k
+tokens at 4 factions, 7.9k at 64. Total prompt tokens per turn grow ~93x while agents grow 16x.
+A control run fixes the world at its 64-faction size (every prompt ~8k tokens) and varies only
+how many factions act (the rest pass without a model call; `run.world_factions`). The result
+is in finding 2.
 
 **1. Shared-prefix reuse is worth 5.2x at 64 agents.** Every prompt starts with the same rules,
 map and world state; only the last 6-13% is agent-specific. With prefix caching, that shared
@@ -74,9 +74,20 @@ accounts for roughly half the step time. Second, prefill queueing: all agents ar
 and are admitted in chunks under a per-step token budget. Up to 56 requests wait at 64
 factions (22 at 32), and their prefill chunks share steps with decodes. KV capacity is *not* a
 driver with prefix caching on: no preemptions at any faction count, and the cache never passed
-61% full. How much of the latency growth is longer context rather than more agents awaits the
-control above. *Batching makes more agents cheap per agent; budget for per-agent latency, not
-cycle time.*
+61% full.
+
+The fixed-prompt control shows what per-token latency actually tracks: **context in flight**,
+agents x prompt tokens. Neither variable governs it alone:
+- *More agents, same ~8k prompts:* 4 to 64 agents still raises turn time 3.1x and per-token
+  latency 6.6x (19 to 125 ms).
+- *Same agents, longer prompts:* at 4 agents, prompts 5.5x longer barely move per-token
+  latency (17.8 to 19.1 ms). 4 x 8k tokens is still small next to reading the weights.
+- *One curve:* both experiments lie on one curve. Latency is flat at ~18-23 ms up to ~65k
+  tokens in flight, ~36-43 ms at ~130k, and ~125-134 ms at 525k
+  ([plot](https://github.com/GIO443/speculative-statecraft/blob/main/results/phase4-control/20261006T222655Z/in_flight.png)).
+
+*Batching makes more agents cheap per agent; budget per-agent latency by agents x context,
+not by either alone.*
 
 **3. Guided decoding costs 7-14% of turn time at 16+ factions and is still worth it on a small
 model.** At 4-8 factions the difference is within noise. Without a grammar, the 1.5B model
@@ -110,7 +121,9 @@ torch.compile memory, not only CUDA graphs. That miss and its fix are recorded i
 [the model config](configs/models/qwen2.5-1.5b-instruct-bf16.yaml).
 
 **Known limits.** One model on one laptop GPU under WSL2 / Docker Desktop (pinned host memory
-is unavailable there), so absolute numbers will differ elsewhere. The narrator hit its
+is unavailable there), so absolute numbers will differ elsewhere. The same configuration rerun
+in a later session came out ~6% faster. Variants are compared within one run, and across runs
+only where effects are far larger than that. The narrator hit its
 200-token cap in ~46% of turns. Legal action rate (~60-70%) reflects a 1.5B model playing a
 game, not a production automation rate.
 
