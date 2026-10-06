@@ -123,8 +123,11 @@ uv run python -m analysis.plot_turns results/phase1-1.5b/<timestamp>
 
 Add `--dry-run` to the harness to print the plan and KV predictions without starting vLLM.
 
-## Next
+## Speculative decoding
 
-Speculative decoding (training a draft head on this game's own outputs, and finding the
-batch size where speculation stops paying) lives in the sibling repo `speculative-statecraft`,
-which builds on this one.
+The sibling repo [speculative-statecraft](https://github.com/GIO443/speculative-statecraft)
+builds on this one: it trains an EAGLE-1 draft head on this game's own outputs and runs it
+through the same harness. In short: the workload-trained head beats n-gram speculation at
+every load and makes turns up to 1.34x faster at 4-16 factions, but every form of speculation
+is slower than none from 32 concurrent requests up, and on 8 GB a generic small draft model
+does not fit at all.
