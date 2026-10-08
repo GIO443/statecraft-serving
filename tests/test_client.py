@@ -85,6 +85,25 @@ def test_optional_fields_omitted() -> None:
     asyncio.run(_client(handler).chat(request))
     assert "structured_outputs" not in seen[0]
     assert "priority" not in seen[0]
+    assert "min_tokens" not in seen[0] and "ignore_eos" not in seen[0]
+
+
+def test_fixed_length_fields_sent() -> None:
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=_sse(_chunk("x", "length"), USAGE_CHUNK))
+
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=8,
+        temperature=0,
+        min_tokens=8,
+        ignore_eos=True,
+    )
+    asyncio.run(_client(handler).chat(request))
+    assert seen[0]["min_tokens"] == 8 and seen[0]["ignore_eos"] is True
 
 
 def test_server_error_is_reported_not_raised() -> None:

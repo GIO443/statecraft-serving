@@ -6,6 +6,10 @@ This repo answers that with a deliberately small, fully measured setup: a turn-b
 game where 4 to 64 LLM-driven factions each make one structured decision per turn, served by
 vLLM on a single 8 GB laptop GPU. The game is the workload. The results are about serving.
 
+One result transfers well beyond this setup: **constraining the output format buys
+parseability, not correctness.** Guided JSON decoding takes valid replies from 78-92% to 100%,
+but the share of decisions that are legal moves stays at ~67% either way (finding 3).
+
 Companion repo: [speculative-statecraft](https://github.com/GIO443/speculative-statecraft)
 (an EAGLE draft head trained on this game's own outputs, and where speculation stops paying).
 
@@ -120,12 +124,22 @@ landed within 1%. The first eager prediction missed by +31% because eager mode a
 torch.compile memory, not only CUDA graphs. That miss and its fix are recorded in
 [the model config](configs/models/qwen2.5-1.5b-instruct-bf16.yaml).
 
+**The narrator's token cap does not drive these comparisons.** The streamed narrator hits its
+200-token cap in 7-93% of turns depending on config and faction count, so its share of turn
+time differs between runs. Recomputing every comparison on the faction-decision phase alone
+(narrator excluded) keeps each conclusion, and several get stronger:
+- *Cascade attention:* 1.09-1.21x faster at every faction count, all outside noise.
+- *Guided decoding off:* 1.10-1.23x faster.
+- *Prefix caching off:* up to 6.7x slower.
+
+One number changes: with the narrator excluded, eager mode is *1.13x faster* than default
+at 64 factions rather than equal. That is not explained yet.
+
 **Known limits.** One model on one laptop GPU under WSL2 / Docker Desktop (pinned host memory
 is unavailable there), so absolute numbers will differ elsewhere. The same configuration rerun
 in a later session came out ~6% faster. Variants are compared within one run, and across runs
-only where effects are far larger than that. The narrator hit its
-200-token cap in ~46% of turns. Legal action rate (~60-70%) reflects a 1.5B model playing a
-game, not a production automation rate.
+only where effects are far larger than that. Legal action rate (~60-70%) reflects a 1.5B
+model playing a game, not a production automation rate.
 
 ## How it works
 

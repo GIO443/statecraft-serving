@@ -26,6 +26,9 @@ class ChatRequest(BaseModel):
     json_schema: dict[str, Any] | None = None  # set => guided decoding (vLLM structured_outputs)
     priority: int | None = None  # set => requires vLLM --scheduling-policy priority
     return_token_ids: bool = False  # ask vLLM for prompt and sampled token ids (training data)
+    # Fixed-length decoding for micro-benchmarks (vLLM sampling extensions); off by default.
+    min_tokens: int | None = None
+    ignore_eos: bool = False
 
 
 class Completion(BaseModel):
@@ -75,6 +78,10 @@ class OpenAIChatClient:
             extra_body["priority"] = request.priority
         if request.return_token_ids:
             extra_body["return_token_ids"] = True
+        if request.min_tokens is not None:
+            extra_body["min_tokens"] = request.min_tokens
+        if request.ignore_eos:
+            extra_body["ignore_eos"] = True
 
         parts: list[str] = []
         prompt_ids: list[int] | None = None
