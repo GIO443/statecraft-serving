@@ -173,7 +173,12 @@ Add `--dry-run` to the harness to print the plan and KV predictions without star
 
 The sibling repo [speculative-statecraft](https://github.com/GIO443/speculative-statecraft)
 builds on this one: it trains an EAGLE-1 draft head on this game's own outputs and runs it
-through the same harness. In short: the workload-trained head beats n-gram speculation at
-every load and makes turns up to 1.34x faster at 4-16 factions, but every form of speculation
-is slower than none from 32 concurrent requests up, and on 8 GB a generic small draft model
-does not fit at all.
+through the same harness. In short:
+- *Speedup:* the workload-trained head beats n-gram speculation on this game and makes turns
+  up to 1.34x faster at 4-16 factions.
+- *Workload-specific:* on a different JSON schema the same head loses to n-gram.
+- *High load:* every form of speculation is slower than none from ~100k tokens of context in
+  flight. That turns out to be mostly vLLM 0.30's default FlashAttention verification path: at
+  batch 32 a verifying step costs 2.7x a plain one there, against 1.25-1.46x on the Triton and
+  FlashInfer backends.
+- *Memory:* on 8 GB a generic small draft model does not fit at all.
